@@ -15,7 +15,9 @@ import {
   Import,
   LayoutGrid,
   Library,
+  Pause,
   PanelRightOpen,
+  Play,
   Search,
   Star,
   Trash2,
@@ -27,6 +29,13 @@ import "./styles.css";
 
 const CATEGORIES = ["All", "Dua", "Surah", "Quran", "Morning", "Evening", "Other"];
 const BACKUP_VERSION = 1;
+const AUTOPLAY_OPTIONS = [
+  { label: "Off", value: 0 },
+  { label: "10s", value: 10 },
+  { label: "20s", value: 20 },
+  { label: "30s", value: 30 },
+  { label: "1m", value: 60 },
+];
 
 function formatBytes(bytes) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -99,6 +108,7 @@ function App() {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
   const [viewMode, setViewMode] = useState("gallery");
+  const [autoPlaySeconds, setAutoPlaySeconds] = useState(0);
   const [uploadCategory, setUploadCategory] = useState("Dua");
   const [isLoading, setIsLoading] = useState(true);
   const [dropActive, setDropActive] = useState(false);
@@ -133,6 +143,20 @@ function App() {
   const activeDocument = allDocuments.find((item) => item.id === activeId) || filteredDocuments[0] || null;
   const favoriteCount = allDocuments.filter((item) => item.favorite).length;
   const pdfCount = allDocuments.filter((item) => item.type === "application/pdf").length;
+
+  useEffect(() => {
+    if (viewMode !== "reader" || !autoPlaySeconds || filteredDocuments.length < 2) return undefined;
+
+    const timer = window.setInterval(() => {
+      setActiveId((currentId) => {
+        const currentIndex = filteredDocuments.findIndex((item) => item.id === currentId);
+        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % filteredDocuments.length;
+        return filteredDocuments[nextIndex].id;
+      });
+    }, autoPlaySeconds * 1000);
+
+    return () => window.clearInterval(timer);
+  }, [autoPlaySeconds, filteredDocuments, viewMode]);
 
   async function refreshDocument(nextDocument) {
     await saveDocument(nextDocument);
@@ -466,6 +490,22 @@ function App() {
                 Reader
               </button>
             </div>
+            {viewMode === "reader" && (
+              <div className="autoplay-controls" aria-label="Auto play reader">
+                {autoPlaySeconds ? <Pause size={16} /> : <Play size={16} />}
+                <select
+                  value={autoPlaySeconds}
+                  onChange={(event) => setAutoPlaySeconds(Number(event.target.value))}
+                  aria-label="Auto play interval"
+                >
+                  {AUTOPLAY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="filter-row" aria-label="Category filter">
               <Filter size={17} />
               {CATEGORIES.map((item) => (
@@ -565,6 +605,9 @@ function GalleryCard({ document, onOpen }) {
         </button>
       ) : (
         <img className="gallery-image" src={url} alt={document.title} loading="lazy" />
+      )}
+      {document.type !== "application/pdf" && (
+        <button className="image-open-hit" type="button" onClick={onOpen} aria-label={`Open ${document.title}`} />
       )}
     </article>
   );

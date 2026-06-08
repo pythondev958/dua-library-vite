@@ -12,7 +12,7 @@ const folders = [
   ["evening", "Evening"],
   ["other", "Other"],
 ];
-const allowedExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf"]);
+const allowedExtensions = new Set([".png", ".jpg", ".jpeg", ".jfif", ".webp", ".gif", ".pdf"]);
 
 function titleFromFile(fileName) {
   return fileName.replace(/\.[^/.]+$/, "").replace(/[-_]+/g, " ");
@@ -20,7 +20,7 @@ function titleFromFile(fileName) {
 
 function typeFromExtension(extension) {
   if (extension === ".pdf") return "application/pdf";
-  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".jpg" || extension === ".jpeg" || extension === ".jfif") return "image/jpeg";
   if (extension === ".webp") return "image/webp";
   if (extension === ".gif") return "image/gif";
   return "image/png";

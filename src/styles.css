@@ -473,6 +473,18 @@ h2 {
   gap: 16px;
 }
 
+.content-grid.reader-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+  align-items: start;
+}
+
+.reader-focus-anchor {
+  position: relative;
+  top: -10px;
+  grid-column: 1 / -1;
+  height: 0;
+}
+
 .document-list {
   display: grid;
   align-content: start;
@@ -543,6 +555,14 @@ h2 {
   background: #fff;
   border: 1px solid rgba(51, 46, 39, 0.12);
   border-radius: 8px;
+}
+
+.reader-layout .viewer {
+  grid-column: 1;
+}
+
+.reader-layout .document-list {
+  grid-column: 2;
 }
 
 .viewer-toolbar {
@@ -724,8 +744,25 @@ h2 {
     grid-template-columns: 1fr;
   }
 
+  .content-grid.reader-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .reader-layout .viewer,
+  .reader-layout .document-list {
+    grid-column: 1;
+  }
+
   .library-panel {
     min-height: auto;
+  }
+
+  .workspace.reader-active .library-panel {
+    order: 1;
+  }
+
+  .workspace.reader-active .sidebar {
+    order: 2;
   }
 
   .document-list {

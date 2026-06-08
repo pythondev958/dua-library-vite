@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import JSZip from "jszip";
 import {
@@ -115,8 +115,14 @@ function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [isCachingOffline, setIsCachingOffline] = useState(false);
+  const readerTopRef = useRef(null);
 
   useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+
     Promise.all([getDocuments(), loadStarterLibrary()])
       .then(([items, starterItems]) => {
         const sorted = items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -157,6 +163,11 @@ function App() {
 
     return () => window.clearInterval(timer);
   }, [autoPlaySeconds, filteredDocuments, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "reader" || !activeId) return;
+    readerTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [activeId, viewMode]);
 
   async function refreshDocument(nextDocument) {
     await saveDocument(nextDocument);
@@ -258,6 +269,37 @@ function App() {
       setError("Could not create the backup file.");
     } finally {
       setIsBusy(false);
+    }
+  }
+
+  async function saveStarterOffline() {
+    setError("");
+    setNotice("");
+
+    const starterPaths = starterDocuments.map((item) => item.url).filter(Boolean);
+    if (!starterPaths.length) {
+      setError("No starter files are available to save offline.");
+      return;
+    }
+
+    if (!("caches" in window)) {
+      setError("This browser does not support offline caching.");
+      return;
+    }
+
+    setIsCachingOffline(true);
+    try {
+      if ("serviceWorker" in navigator) {
+        await navigator.serviceWorker.register("/sw.js");
+      }
+
+      const cache = await caches.open("dua-library-starter-v1");
+      await cache.addAll(["/starter/manifest.json", ...starterPaths]);
+      setNotice(`${starterPaths.length} starter file${starterPaths.length === 1 ? "" : "s"} saved for offline reading on this device.`);
+    } catch {
+      setError("Could not save all starter files offline. Try again with a stable connection and enough phone storage.");
+    } finally {
+      setIsCachingOffline(false);
     }
   }
 
@@ -388,7 +430,7 @@ function App() {
       {error && <div className="error-banner">{error}</div>}
       {notice && <div className="notice-banner">{notice}</div>}
 
-      <section className="workspace">
+      <section className={viewMode === "reader" ? "workspace reader-active" : "workspace"}>
         <aside className="sidebar">
           <div
             className={`dropzone ${dropActive ? "active" : ""}`}
@@ -420,6 +462,15 @@ function App() {
           </div>
 
           <div className="backup-actions">
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={saveStarterOffline}
+              disabled={isCachingOffline || !starterDocuments.length}
+            >
+              <Download size={18} />
+              {isCachingOffline ? "Saving..." : "Save offline"}
+            </button>
             <button className="secondary-button" type="button" onClick={exportBackup} disabled={isBusy || !documents.length}>
               <FolderArchive size={18} />
               Export backup
@@ -531,17 +582,18 @@ function App() {
               }}
             />
           ) : (
-            <div className="content-grid">
+            <div className="content-grid reader-layout">
+              <div ref={readerTopRef} className="reader-focus-anchor" />
+              <Viewer
+                document={activeDocument}
+                onDelete={handleDelete}
+                onUpdate={updateActive}
+              />
               <DocumentList
                 documents={filteredDocuments}
                 activeId={activeDocument?.id}
                 loading={isLoading}
                 onSelect={setActiveId}
-              />
-              <Viewer
-                document={activeDocument}
-                onDelete={handleDelete}
-                onUpdate={updateActive}
               />
             </div>
           )}

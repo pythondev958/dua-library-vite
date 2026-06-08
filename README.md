@@ -46,6 +46,14 @@ Commit the files and the updated `public/starter/manifest.json`. After you push 
 
 PDFs open through a dedicated **Open PDF** action for better Android Chrome support. Images appear in the default gallery view so users can scroll and read multiple duas without opening each one.
 
+## Offline Reading
+
+Starter files can be saved for offline use from inside the app with **Save offline**.
+
+This downloads the bundled starter PDFs/images into the browser cache on that device. After it finishes, starter PDFs/images can be opened without internet on the same browser, as long as Chrome site data is not cleared.
+
+User-uploaded files are already stored locally in IndexedDB and can be opened offline on the same device/browser.
+
 ## Run Locally
 
 ```bash

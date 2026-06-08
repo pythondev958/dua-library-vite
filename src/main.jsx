@@ -406,8 +406,15 @@ function App() {
             <BookOpen size={24} />
           </div>
           <div>
+            <p className="kicker">Islamic Reading Companion</p>
             <h1>Dua Library</h1>
-            <p>Private image and PDF collection, saved in this browser.</p>
+            <p>Read, reflect, save offline, and keep your personal duas private on this device.</p>
+            <div className="stat-pills" aria-label="Library summary">
+              <span>{allDocuments.length} items</span>
+              <span>{starterDocuments.length} starter</span>
+              <span>{pdfCount} PDFs</span>
+              <span>{documents.length} personal</span>
+            </div>
           </div>
         </div>
 
@@ -522,6 +529,9 @@ function App() {
             <div>
               <span className="eyebrow">Library</span>
               <h2>{category === "All" ? "All saved files" : category}</h2>
+              <p className="panel-subtitle">
+                Showing {filteredDocuments.length} of {allDocuments.length} items
+              </p>
             </div>
             <div className="view-switch" aria-label="View mode">
               <button

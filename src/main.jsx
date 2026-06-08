@@ -1,0 +1,575 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import JSZip from "jszip";
+import {
+  BookOpen,
+  CalendarClock,
+  Download,
+  FileImage,
+  FileText,
+  Filter,
+  FolderArchive,
+  Heart,
+  ImagePlus,
+  Import,
+  Library,
+  Search,
+  Star,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
+import { deleteDocument, getDocuments, saveDocument } from "./storage";
+import "./styles.css";
+
+const CATEGORIES = ["All", "Dua", "Surah", "Quran", "Morning", "Evening", "Other"];
+const BACKUP_VERSION = 1;
+
+function formatBytes(bytes) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDate(value) {
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function makeTitle(fileName) {
+  return fileName.replace(/\.[^/.]+$/, "").replace(/[-_]+/g, " ");
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function blobHash(blob) {
+  const buffer = await blob.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function App() {
+  const [documents, setDocuments] = useState([]);
+  const [activeId, setActiveId] = useState(null);
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("All");
+  const [uploadCategory, setUploadCategory] = useState("Dua");
+  const [isLoading, setIsLoading] = useState(true);
+  const [dropActive, setDropActive] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
+
+  useEffect(() => {
+    getDocuments()
+      .then((items) => {
+        const sorted = items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        setDocuments(sorted);
+        setActiveId(sorted[0]?.id || null);
+      })
+      .catch(() => setError("Could not open local browser storage."))
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  const filteredDocuments = useMemo(() => {
+    const cleanQuery = query.trim().toLowerCase();
+
+    return documents.filter((item) => {
+      const matchesCategory = category === "All" || item.category === category;
+      const matchesQuery = !cleanQuery || `${item.title} ${item.category} ${item.fileName}`.toLowerCase().includes(cleanQuery);
+      return matchesCategory && matchesQuery;
+    });
+  }, [documents, query, category]);
+
+  const activeDocument = documents.find((item) => item.id === activeId) || filteredDocuments[0] || null;
+  const favoriteCount = documents.filter((item) => item.favorite).length;
+  const pdfCount = documents.filter((item) => item.type === "application/pdf").length;
+
+  async function refreshDocument(nextDocument) {
+    await saveDocument(nextDocument);
+    setDocuments((current) =>
+      current
+        .map((item) => (item.id === nextDocument.id ? nextDocument : item))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    );
+  }
+
+  async function handleFiles(files) {
+    setError("");
+    setNotice("");
+    const validFiles = Array.from(files).filter((file) => file.type.startsWith("image/") || file.type === "application/pdf");
+
+    if (!validFiles.length) {
+      setError("Please choose image or PDF files.");
+      return;
+    }
+
+    const createdDocuments = await Promise.all(validFiles.map(async (file) => {
+      const now = new Date().toISOString();
+      return {
+        id: crypto.randomUUID(),
+        title: makeTitle(file.name),
+        category: uploadCategory,
+        fileName: file.name,
+        size: file.size,
+        type: file.type,
+        blob: file,
+        hash: await blobHash(file),
+        favorite: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+    }));
+
+    await Promise.all(createdDocuments.map(saveDocument));
+    setDocuments((current) => [...createdDocuments, ...current].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+    setActiveId(createdDocuments[0].id);
+    setNotice(`${createdDocuments.length} file${createdDocuments.length === 1 ? "" : "s"} added.`);
+  }
+
+  async function exportBackup() {
+    setError("");
+    setNotice("");
+
+    if (!documents.length) {
+      setError("Upload at least one file before exporting a backup.");
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      const zip = new JSZip();
+      const filesFolder = zip.folder("files");
+      const manifestDocuments = await Promise.all(
+        documents.map(async (item) => {
+          const hash = item.hash || (await blobHash(item.blob));
+          const extension = item.fileName.includes(".") ? item.fileName.split(".").pop() : "bin";
+          const storedName = `${item.id}.${extension}`;
+
+          filesFolder.file(storedName, item.blob);
+
+          return {
+            id: item.id,
+            title: item.title,
+            category: item.category,
+            fileName: item.fileName,
+            storedName,
+            size: item.size,
+            type: item.type,
+            hash,
+            favorite: item.favorite,
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+          };
+        }),
+      );
+
+      zip.file(
+        "manifest.json",
+        JSON.stringify(
+          {
+            app: "dua-library",
+            version: BACKUP_VERSION,
+            exportedAt: new Date().toISOString(),
+            documents: manifestDocuments,
+          },
+          null,
+          2,
+        ),
+      );
+
+      const backupBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+      downloadBlob(backupBlob, `dua-library-backup-${new Date().toISOString().slice(0, 10)}.zip`);
+      setNotice("Backup exported. Keep it somewhere safe before clearing browser data.");
+    } catch {
+      setError("Could not create the backup file.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function importBackup(file) {
+    if (!file) return;
+
+    setError("");
+    setNotice("");
+    setIsBusy(true);
+
+    try {
+      const zip = await JSZip.loadAsync(file);
+      const manifestFile = zip.file("manifest.json");
+
+      if (!manifestFile) {
+        setError("This does not look like a Dua Library backup.");
+        return;
+      }
+
+      const manifest = JSON.parse(await manifestFile.async("string"));
+      const incomingDocuments = Array.isArray(manifest.documents) ? manifest.documents : [];
+
+      const existingHashes = new Set(
+        await Promise.all(documents.map(async (item) => item.hash || blobHash(item.blob))),
+      );
+      const existingIds = new Set(documents.map((item) => item.id));
+      const imported = [];
+      let skipped = 0;
+
+      for (const item of incomingDocuments) {
+        const zippedFile = zip.file(`files/${item.storedName}`);
+        if (!zippedFile) {
+          skipped += 1;
+          continue;
+        }
+
+        const blob = await zippedFile.async("blob");
+        const hash = item.hash || (await blobHash(blob));
+
+        if (existingIds.has(item.id) || existingHashes.has(hash)) {
+          skipped += 1;
+          continue;
+        }
+
+        const document = {
+          id: item.id || crypto.randomUUID(),
+          title: item.title || makeTitle(item.fileName || "Imported file"),
+          category: CATEGORIES.includes(item.category) && item.category !== "All" ? item.category : "Other",
+          fileName: item.fileName || item.storedName || "imported-file",
+          size: item.size || blob.size,
+          type: item.type || blob.type || "application/octet-stream",
+          blob: new Blob([blob], { type: item.type || blob.type }),
+          hash,
+          favorite: Boolean(item.favorite),
+          createdAt: item.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        imported.push(document);
+        existingIds.add(document.id);
+        existingHashes.add(hash);
+      }
+
+      if (imported.length) {
+        await Promise.all(imported.map(saveDocument));
+        setDocuments((current) => [...imported, ...current].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+        setActiveId(imported[0].id);
+      }
+
+      setNotice(`Imported ${imported.length} file${imported.length === 1 ? "" : "s"}. Skipped ${skipped} already saved or missing item${skipped === 1 ? "" : "s"}.`);
+    } catch {
+      setError("Could not import this backup file.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleDelete(id) {
+    await deleteDocument(id);
+    setDocuments((current) => {
+      const next = current.filter((item) => item.id !== id);
+      setActiveId(next[0]?.id || null);
+      return next;
+    });
+  }
+
+  async function updateActive(updates) {
+    if (!activeDocument) return;
+    await refreshDocument({
+      ...activeDocument,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  return (
+    <main className="app-shell">
+      <section className="topbar">
+        <div className="brand">
+          <div className="brand-mark" aria-hidden="true">
+            <BookOpen size={24} />
+          </div>
+          <div>
+            <h1>Dua Library</h1>
+            <p>Private image and PDF collection, saved in this browser.</p>
+          </div>
+        </div>
+
+        <div className="search-box">
+          <Search size={18} aria-hidden="true" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search title, file, or category"
+            aria-label="Search library"
+          />
+          {query && (
+            <button type="button" className="icon-button quiet" onClick={() => setQuery("")} aria-label="Clear search">
+              <X size={18} />
+            </button>
+          )}
+        </div>
+      </section>
+
+      {error && <div className="error-banner">{error}</div>}
+      {notice && <div className="notice-banner">{notice}</div>}
+
+      <section className="workspace">
+        <aside className="sidebar">
+          <div
+            className={`dropzone ${dropActive ? "active" : ""}`}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setDropActive(true);
+            }}
+            onDragOver={(event) => event.preventDefault()}
+            onDragLeave={() => setDropActive(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDropActive(false);
+              handleFiles(event.dataTransfer.files);
+            }}
+          >
+            <ImagePlus size={32} />
+            <strong>Upload duas, surahs, Quran pages, or PDFs</strong>
+            <span>Images and PDF files stay on this device.</span>
+            <label className="primary-button">
+              <Upload size={18} />
+              Choose files
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                multiple
+                onChange={(event) => handleFiles(event.target.files)}
+              />
+            </label>
+          </div>
+
+          <div className="backup-actions">
+            <button className="secondary-button" type="button" onClick={exportBackup} disabled={isBusy || !documents.length}>
+              <FolderArchive size={18} />
+              Export backup
+            </button>
+            <label className="secondary-button">
+              <Import size={18} />
+              Import backup
+              <input
+                type="file"
+                accept=".zip,application/zip,application/x-zip-compressed"
+                onChange={(event) => {
+                  importBackup(event.target.files[0]);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+
+          <label className="field-label" htmlFor="upload-category">
+            Save new uploads as
+          </label>
+          <select id="upload-category" value={uploadCategory} onChange={(event) => setUploadCategory(event.target.value)}>
+            {CATEGORIES.filter((item) => item !== "All").map((item) => (
+              <option key={item}>{item}</option>
+            ))}
+          </select>
+
+          <div className="stats-grid" aria-label="Library totals">
+            <div>
+              <Library size={18} />
+              <strong>{documents.length}</strong>
+              <span>Items</span>
+            </div>
+            <div>
+              <FileText size={18} />
+              <strong>{pdfCount}</strong>
+              <span>PDFs</span>
+            </div>
+            <div>
+              <Star size={18} />
+              <strong>{favoriteCount}</strong>
+              <span>Saved</span>
+            </div>
+          </div>
+        </aside>
+
+        <section className="library-panel">
+          <div className="panel-header">
+            <div>
+              <span className="eyebrow">Library</span>
+              <h2>{category === "All" ? "All saved files" : category}</h2>
+            </div>
+            <div className="filter-row" aria-label="Category filter">
+              <Filter size={17} />
+              {CATEGORIES.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className={category === item ? "filter active" : "filter"}
+                  onClick={() => setCategory(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="content-grid">
+            <DocumentList
+              documents={filteredDocuments}
+              activeId={activeDocument?.id}
+              loading={isLoading}
+              onSelect={setActiveId}
+            />
+            <Viewer
+              document={activeDocument}
+              onDelete={handleDelete}
+              onUpdate={updateActive}
+            />
+          </div>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+function DocumentList({ documents, activeId, loading, onSelect }) {
+  if (loading) {
+    return <div className="empty-state">Opening local library...</div>;
+  }
+
+  if (!documents.length) {
+    return (
+      <div className="empty-state">
+        <FileImage size={34} />
+        <strong>No files yet</strong>
+        <span>Upload an image or PDF to begin.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="document-list">
+      {documents.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          className={activeId === item.id ? "document-card active" : "document-card"}
+          onClick={() => onSelect(item.id)}
+        >
+          <FilePreview document={item} />
+          <div>
+            <strong>{item.title}</strong>
+            <span>{item.category}</span>
+            <small>
+              {formatBytes(item.size)} · {formatDate(item.updatedAt)}
+            </small>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function FilePreview({ document }) {
+  const url = useMemo(() => URL.createObjectURL(document.blob), [document.blob]);
+
+  useEffect(() => {
+    return () => URL.revokeObjectURL(url);
+  }, [url]);
+
+  if (document.type === "application/pdf") {
+    return (
+      <div className="preview-tile pdf-tile">
+        <FileText size={26} />
+      </div>
+    );
+  }
+
+  return <img className="preview-tile" src={url} alt="" />;
+}
+
+function Viewer({ document, onDelete, onUpdate }) {
+  const fileUrl = useMemo(() => (document ? URL.createObjectURL(document.blob) : ""), [document]);
+
+  useEffect(() => {
+    return () => {
+      if (fileUrl) URL.revokeObjectURL(fileUrl);
+    };
+  }, [fileUrl]);
+
+  if (!document) {
+    return (
+      <article className="viewer empty-viewer">
+        <BookOpen size={42} />
+        <h3>Your reading space is ready.</h3>
+        <p>Upload a dua, surah image, Quran page, or PDF and it will appear here.</p>
+      </article>
+    );
+  }
+
+  return (
+    <article className="viewer">
+      <div className="viewer-toolbar">
+        <div className="title-editor">
+          <input
+            value={document.title}
+            onChange={(event) => onUpdate({ title: event.target.value })}
+            aria-label="Document title"
+          />
+          <span>
+            <CalendarClock size={15} />
+            Added {formatDate(document.createdAt)}
+          </span>
+        </div>
+
+        <div className="toolbar-actions">
+          <button
+            type="button"
+            className={document.favorite ? "icon-button favorite active" : "icon-button favorite"}
+            onClick={() => onUpdate({ favorite: !document.favorite })}
+            aria-label="Toggle favorite"
+          >
+            <Heart size={18} />
+          </button>
+          <a className="icon-button" href={fileUrl} download={document.fileName} aria-label="Download file">
+            <Download size={18} />
+          </a>
+          <button type="button" className="icon-button danger" onClick={() => onDelete(document.id)} aria-label="Delete file">
+            <Trash2 size={18} />
+          </button>
+        </div>
+      </div>
+
+      <div className="meta-row">
+        <select value={document.category} onChange={(event) => onUpdate({ category: event.target.value })}>
+          {CATEGORIES.filter((item) => item !== "All").map((item) => (
+            <option key={item}>{item}</option>
+          ))}
+        </select>
+        <span>{document.fileName}</span>
+        <span>{formatBytes(document.size)}</span>
+      </div>
+
+      <div className="reader">
+        {document.type === "application/pdf" ? (
+          <iframe src={fileUrl} title={document.title} />
+        ) : (
+          <img src={fileUrl} alt={document.title} />
+        )}
+      </div>
+    </article>
+  );
+}
+
+createRoot(document.getElementById("root")).render(<App />);

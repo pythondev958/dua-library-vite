@@ -5,6 +5,7 @@ import {
   BookOpen,
   CalendarClock,
   Download,
+  ExternalLink,
   FileImage,
   FileText,
   Filter,
@@ -12,7 +13,9 @@ import {
   Heart,
   ImagePlus,
   Import,
+  LayoutGrid,
   Library,
+  PanelRightOpen,
   Search,
   Star,
   Trash2,
@@ -42,6 +45,34 @@ function makeTitle(fileName) {
   return fileName.replace(/\.[^/.]+$/, "").replace(/[-_]+/g, " ");
 }
 
+async function loadStarterLibrary() {
+  try {
+    const response = await fetch("/starter/manifest.json", { cache: "no-cache" });
+    if (!response.ok) return [];
+
+    const manifest = await response.json();
+    const starterItems = Array.isArray(manifest.documents) ? manifest.documents : [];
+    const now = new Date().toISOString();
+
+    return starterItems.map((item) => ({
+      id: item.id || `starter-${item.path}`,
+      title: item.title || makeTitle(item.fileName || "Starter file"),
+      category: CATEGORIES.includes(item.category) && item.category !== "All" ? item.category : "Other",
+      fileName: item.fileName || item.path?.split("/").pop() || "starter-file",
+      size: item.size || 0,
+      type: item.type || (item.path?.endsWith(".pdf") ? "application/pdf" : "image/png"),
+      hash: item.hash || "",
+      favorite: Boolean(item.favorite),
+      createdAt: item.createdAt || now,
+      updatedAt: item.updatedAt || now,
+      url: item.path,
+      source: "starter",
+    }));
+  } catch {
+    return [];
+  }
+}
+
 function downloadBlob(blob, fileName) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -63,9 +94,11 @@ async function blobHash(blob) {
 
 function App() {
   const [documents, setDocuments] = useState([]);
+  const [starterDocuments, setStarterDocuments] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
+  const [viewMode, setViewMode] = useState("gallery");
   const [uploadCategory, setUploadCategory] = useState("Dua");
   const [isLoading, setIsLoading] = useState(true);
   const [dropActive, setDropActive] = useState(false);
@@ -74,29 +107,32 @@ function App() {
   const [isBusy, setIsBusy] = useState(false);
 
   useEffect(() => {
-    getDocuments()
-      .then((items) => {
+    Promise.all([getDocuments(), loadStarterLibrary()])
+      .then(([items, starterItems]) => {
         const sorted = items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        setStarterDocuments(starterItems);
         setDocuments(sorted);
-        setActiveId(sorted[0]?.id || null);
+        setActiveId(sorted[0]?.id || starterItems[0]?.id || null);
       })
       .catch(() => setError("Could not open local browser storage."))
       .finally(() => setIsLoading(false));
   }, []);
 
+  const allDocuments = useMemo(() => [...documents, ...starterDocuments], [documents, starterDocuments]);
+
   const filteredDocuments = useMemo(() => {
     const cleanQuery = query.trim().toLowerCase();
 
-    return documents.filter((item) => {
+    return allDocuments.filter((item) => {
       const matchesCategory = category === "All" || item.category === category;
       const matchesQuery = !cleanQuery || `${item.title} ${item.category} ${item.fileName}`.toLowerCase().includes(cleanQuery);
       return matchesCategory && matchesQuery;
     });
-  }, [documents, query, category]);
+  }, [allDocuments, query, category]);
 
-  const activeDocument = documents.find((item) => item.id === activeId) || filteredDocuments[0] || null;
-  const favoriteCount = documents.filter((item) => item.favorite).length;
-  const pdfCount = documents.filter((item) => item.type === "application/pdf").length;
+  const activeDocument = allDocuments.find((item) => item.id === activeId) || filteredDocuments[0] || null;
+  const favoriteCount = allDocuments.filter((item) => item.favorite).length;
+  const pdfCount = allDocuments.filter((item) => item.type === "application/pdf").length;
 
   async function refreshDocument(nextDocument) {
     await saveDocument(nextDocument);
@@ -220,10 +256,11 @@ function App() {
       const manifest = JSON.parse(await manifestFile.async("string"));
       const incomingDocuments = Array.isArray(manifest.documents) ? manifest.documents : [];
 
-      const existingHashes = new Set(
-        await Promise.all(documents.map(async (item) => item.hash || blobHash(item.blob))),
-      );
-      const existingIds = new Set(documents.map((item) => item.id));
+      const existingHashes = new Set([
+        ...(await Promise.all(documents.map(async (item) => item.hash || blobHash(item.blob)))),
+        ...starterDocuments.map((item) => item.hash).filter(Boolean),
+      ]);
+      const existingIds = new Set(allDocuments.map((item) => item.id));
       const imported = [];
       let skipped = 0;
 
@@ -276,6 +313,7 @@ function App() {
   }
 
   async function handleDelete(id) {
+    if (starterDocuments.some((item) => item.id === id)) return;
     await deleteDocument(id);
     setDocuments((current) => {
       const next = current.filter((item) => item.id !== id);
@@ -286,6 +324,7 @@ function App() {
 
   async function updateActive(updates) {
     if (!activeDocument) return;
+    if (activeDocument.source === "starter") return;
     await refreshDocument({
       ...activeDocument,
       ...updates,
@@ -387,7 +426,7 @@ function App() {
           <div className="stats-grid" aria-label="Library totals">
             <div>
               <Library size={18} />
-              <strong>{documents.length}</strong>
+              <strong>{allDocuments.length}</strong>
               <span>Items</span>
             </div>
             <div>
@@ -409,6 +448,24 @@ function App() {
               <span className="eyebrow">Library</span>
               <h2>{category === "All" ? "All saved files" : category}</h2>
             </div>
+            <div className="view-switch" aria-label="View mode">
+              <button
+                type="button"
+                className={viewMode === "gallery" ? "switch active" : "switch"}
+                onClick={() => setViewMode("gallery")}
+              >
+                <LayoutGrid size={16} />
+                Gallery
+              </button>
+              <button
+                type="button"
+                className={viewMode === "reader" ? "switch active" : "switch"}
+                onClick={() => setViewMode("reader")}
+              >
+                <PanelRightOpen size={16} />
+                Reader
+              </button>
+            </div>
             <div className="filter-row" aria-label="Category filter">
               <Filter size={17} />
               {CATEGORIES.map((item) => (
@@ -424,22 +481,92 @@ function App() {
             </div>
           </div>
 
-          <div className="content-grid">
-            <DocumentList
+          {viewMode === "gallery" ? (
+            <GalleryFeed
               documents={filteredDocuments}
-              activeId={activeDocument?.id}
               loading={isLoading}
-              onSelect={setActiveId}
+              onSelect={(id) => {
+                setActiveId(id);
+                setViewMode("reader");
+              }}
             />
-            <Viewer
-              document={activeDocument}
-              onDelete={handleDelete}
-              onUpdate={updateActive}
-            />
-          </div>
+          ) : (
+            <div className="content-grid">
+              <DocumentList
+                documents={filteredDocuments}
+                activeId={activeDocument?.id}
+                loading={isLoading}
+                onSelect={setActiveId}
+              />
+              <Viewer
+                document={activeDocument}
+                onDelete={handleDelete}
+                onUpdate={updateActive}
+              />
+            </div>
+          )}
         </section>
       </section>
     </main>
+  );
+}
+
+function GalleryFeed({ documents, loading, onSelect }) {
+  if (loading) {
+    return <div className="empty-state">Opening local library...</div>;
+  }
+
+  if (!documents.length) {
+    return (
+      <div className="empty-state">
+        <FileImage size={34} />
+        <strong>No files yet</strong>
+        <span>Upload an image or PDF to begin.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="gallery-feed" aria-label="Scrollable dua gallery">
+      {documents.map((item) => (
+        <GalleryCard key={item.id} document={item} onOpen={() => onSelect(item.id)} />
+      ))}
+    </div>
+  );
+}
+
+function GalleryCard({ document, onOpen }) {
+  const url = useDocumentUrl(document);
+
+  return (
+    <article className="gallery-card">
+      <div className="gallery-card-header">
+        <div>
+          <strong>{document.title}</strong>
+          <span>{document.category}</span>
+        </div>
+        {document.type === "application/pdf" ? (
+          <a className="compact-action" href={url} target="_blank" rel="noreferrer">
+            <ExternalLink size={16} />
+            Open
+          </a>
+        ) : (
+          <button className="compact-action" type="button" onClick={onOpen}>
+            <PanelRightOpen size={16} />
+            View
+          </button>
+        )}
+      </div>
+      {document.type === "application/pdf" ? (
+        <button className="pdf-preview-card" type="button" onClick={onOpen}>
+          <FileText size={38} />
+          <strong>{document.fileName}</strong>
+          <span>Tap Open for the most reliable mobile PDF viewer.</span>
+        </button>
+      ) : (
+        <img className="gallery-image" src={url} alt={document.title} loading="lazy" />
+      )}
+    </article>
   );
 }
 
@@ -482,11 +609,7 @@ function DocumentList({ documents, activeId, loading, onSelect }) {
 }
 
 function FilePreview({ document }) {
-  const url = useMemo(() => URL.createObjectURL(document.blob), [document.blob]);
-
-  useEffect(() => {
-    return () => URL.revokeObjectURL(url);
-  }, [url]);
+  const url = useDocumentUrl(document);
 
   if (document.type === "application/pdf") {
     return (
@@ -500,13 +623,7 @@ function FilePreview({ document }) {
 }
 
 function Viewer({ document, onDelete, onUpdate }) {
-  const fileUrl = useMemo(() => (document ? URL.createObjectURL(document.blob) : ""), [document]);
-
-  useEffect(() => {
-    return () => {
-      if (fileUrl) URL.revokeObjectURL(fileUrl);
-    };
-  }, [fileUrl]);
+  const fileUrl = useDocumentUrl(document);
 
   if (!document) {
     return (
@@ -526,6 +643,7 @@ function Viewer({ document, onDelete, onUpdate }) {
             value={document.title}
             onChange={(event) => onUpdate({ title: event.target.value })}
             aria-label="Document title"
+            readOnly={document.source === "starter"}
           />
           <span>
             <CalendarClock size={15} />
@@ -539,20 +657,32 @@ function Viewer({ document, onDelete, onUpdate }) {
             className={document.favorite ? "icon-button favorite active" : "icon-button favorite"}
             onClick={() => onUpdate({ favorite: !document.favorite })}
             aria-label="Toggle favorite"
+            disabled={document.source === "starter"}
           >
             <Heart size={18} />
           </button>
           <a className="icon-button" href={fileUrl} download={document.fileName} aria-label="Download file">
             <Download size={18} />
           </a>
-          <button type="button" className="icon-button danger" onClick={() => onDelete(document.id)} aria-label="Delete file">
-            <Trash2 size={18} />
-          </button>
+          {document.type === "application/pdf" && (
+            <a className="icon-button" href={fileUrl} target="_blank" rel="noreferrer" aria-label="Open PDF">
+              <ExternalLink size={18} />
+            </a>
+          )}
+          {document.source !== "starter" && (
+            <button type="button" className="icon-button danger" onClick={() => onDelete(document.id)} aria-label="Delete file">
+              <Trash2 size={18} />
+            </button>
+          )}
         </div>
       </div>
 
       <div className="meta-row">
-        <select value={document.category} onChange={(event) => onUpdate({ category: event.target.value })}>
+        <select
+          value={document.category}
+          onChange={(event) => onUpdate({ category: event.target.value })}
+          disabled={document.source === "starter"}
+        >
           {CATEGORIES.filter((item) => item !== "All").map((item) => (
             <option key={item}>{item}</option>
           ))}
@@ -563,13 +693,45 @@ function Viewer({ document, onDelete, onUpdate }) {
 
       <div className="reader">
         {document.type === "application/pdf" ? (
-          <iframe src={fileUrl} title={document.title} />
+          <div className="pdf-reader-fallback">
+            <FileText size={48} />
+            <h3>{document.title}</h3>
+            <p>For Android Chrome, opening the PDF in its own tab is the most reliable way to read it.</p>
+            <div className="pdf-actions">
+              <a className="primary-button" href={fileUrl} target="_blank" rel="noreferrer">
+                <ExternalLink size={18} />
+                Open PDF
+              </a>
+              <a className="secondary-button inline" href={fileUrl} download={document.fileName}>
+                <Download size={18} />
+                Download
+              </a>
+            </div>
+          </div>
         ) : (
           <img src={fileUrl} alt={document.title} />
         )}
       </div>
     </article>
   );
+}
+
+function useDocumentUrl(document) {
+  const url = useMemo(() => {
+    if (!document) return "";
+    if (document.url) return document.url;
+    return URL.createObjectURL(document.blob);
+  }, [document]);
+
+  useEffect(() => {
+    return () => {
+      if (url && document?.blob) {
+        URL.revokeObjectURL(url);
+      }
+    };
+  }, [document, url]);
+
+  return url;
 }
 
 createRoot(document.getElementById("root")).render(<App />);

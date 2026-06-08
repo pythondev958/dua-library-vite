@@ -22,6 +22,30 @@ Use **Export backup** before clearing Chrome history/site data. The app download
 
 Use **Import backup** to restore it later. Importing does not delete current files. It keeps what is already in the library and adds only files that are not already saved.
 
+## Starter Files For The Public App
+
+To ship an initial library with the app, put files in:
+
+```text
+public/starter/duas
+public/starter/surahs
+public/starter/quran
+public/starter/morning
+public/starter/evening
+public/starter/other
+```
+
+Then run:
+
+```bash
+npm run starter:manifest
+npm run build
+```
+
+Commit the files and the updated `public/starter/manifest.json`. After you push to GitHub, Vercel will include those starter files in the deployed app.
+
+PDFs open through a dedicated **Open PDF** action for better Android Chrome support. Images appear in the default gallery view so users can scroll and read multiple duas without opening each one.
+
 ## Run Locally
 
 ```bash

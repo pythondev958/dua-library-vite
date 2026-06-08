@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Dua Library">
+  <rect width="64" height="64" rx="14" fill="#275f53"/>
+  <path d="M18 17.5c0-2 1.6-3.5 3.5-3.5H46v34H21.5A3.5 3.5 0 0 1 18 44.5v-27Z" fill="#f7f4ee"/>
+  <path d="M24 14h22v34H24c-3.3 0-6 2.7-6 6V17.5c0-2 1.6-3.5 3.5-3.5H24Z" fill="#fffaf2"/>
+  <path d="M24 14v34" stroke="#d8cdb9" stroke-width="2" stroke-linecap="round"/>
+  <path d="M31.5 27.5c0-5 4-9 9-9 1.9 0 3.6.6 5 1.5a10.5 10.5 0 1 0 0 15 9 9 0 0 1-14-7.5Z" fill="#d6aa4c"/>
+  <path d="M43.5 25.6 45 28.8l3.5.5-2.5 2.5.6 3.5-3.1-1.7-3.1 1.7.6-3.5-2.5-2.5 3.5-.5 1.5-3.2Z" fill="#275f53"/>
+  <path d="M28 42h15" stroke="#275f53" stroke-width="3" stroke-linecap="round"/>
+</svg>
